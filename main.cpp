@@ -13,6 +13,25 @@ enum class Stat {
 	Str, Dex, Con, Int, Wis, Cha
 };
 
+enum class RollType {
+	Standard, Advantage, Disadvantage
+};
+
+unsigned d20Roll(RollType rollType) {
+	std::uniform_int_distribution<unsigned> die(1, 20);
+	unsigned roll = die(Generator);
+
+	if(rollType == RollType::Standard) {
+		return roll;
+	} else {
+		std::uniform_int_distribution<unsigned> otherDie(1, 20);
+		unsigned otherRoll = otherDie(Generator);
+		return rollType == RollType::Advantage
+			? std::max(roll, otherRoll)
+			: std::min(roll, otherRoll);
+	}
+}
+
 class AttackResult {
 public:
 	AttackResult(unsigned toHit, unsigned damage): toHit(toHit), critSuccess(false), critFail(false), damage(damage) {}
@@ -44,17 +63,16 @@ struct AnimatedObject {
 		HP = (damage>HP) ? 0 : HP-damage;
 	}
 
-	int RollStat(Stat stat) {
-		std::uniform_int_distribution<int> die(1, 20);
+	int RollStat(Stat stat, RollType rollType) {
 		int saveStat = stats[stat];
 		int saveMod = (saveStat/2)-5;
-		int dieRoll = die(Generator);
+		int dieRoll = d20Roll(rollType);
 		return dieRoll+saveMod;
 	}
 
-	AttackResult RollAttack() {
-		std::uniform_int_distribution<unsigned> die(1, 20);
-		const unsigned roll = die(Generator);
+	AttackResult RollAttack(RollType rollType) {
+		const unsigned roll = d20Roll(rollType);
+
 		if (roll == 1) {
 			return CriticalMiss();
 		} else {
@@ -135,14 +153,14 @@ public:
 			}
 		}
 	}
-	void Attack() {
+	void Attack(RollType rollType) {
 		if(objects.size() == 0) {
 			std::cout<<"No objects with which to attack"<<std::endl;
 			return;
 		}
 		std::vector<AttackResult> attackResults;
 		std::transform(objects.begin(), objects.end(), std::back_inserter(attackResults), 
-			[](AnimatedObject result) {return result.RollAttack();}
+			[rollType](AnimatedObject result) {return result.RollAttack(rollType);}
 		);
 		std::sort(attackResults.begin(), attackResults.end(),
 			[](AttackResult left, AttackResult right) { //should return true iff left < right
@@ -194,11 +212,11 @@ public:
 		);
 	}
 
-	void Save(Stat stat, bool halfIfSave, int DC, int damage) {
+	void Save(Stat stat, bool halfIfSave, int DC, int damage, RollType rollType) {
 		std::cout<<"Running save DC: "<<DC<<" or "<<damage<<" damage\n";
 		for(unsigned i = 0; i < objects.size(); ++i) {
 
-			int saveAttempt = objects[i].RollStat(stat);
+			int saveAttempt = objects[i].RollStat(stat, rollType);
 			bool saveSuccess = (saveAttempt >= DC);
 			unsigned damageToApply = saveSuccess
 				? (halfIfSave ? damage/2: 0)
@@ -258,17 +276,43 @@ int main() {
 		auto command = statStrings.find(parsedCommand[0]);
 		if(command != statStrings.end()) {
 			std::cout<<"Found stat"<<std::endl;
+			RollType rollType;
+			if(parsedCommand.size() >= 5) {
+				if(parsedCommand[4] == "adv") {
+					rollType = RollType::Advantage;
+				} else if (parsedCommand[4] == "disadv") {
+					rollType = RollType::Disadvantage;
+				} else {
+					std::cout<<parsedCommand[4]<<" not recognised"<<std::endl;
+					break;
+				}
+			} else {
+				rollType = RollType::Standard;
+			}
 			if(parsedCommand[1] == "half") {
 				std::cout<<"Running save"<<std::endl;
-				AOs.Save(command->second, true, std::stoi(parsedCommand[2]), std::stoi(parsedCommand[3]));
+				AOs.Save(command->second, true, std::stoi(parsedCommand[2]), std::stoi(parsedCommand[3]), rollType);
 			} else if (parsedCommand[1] == "none") {
 				std::cout<<"Running save"<<std::endl;
-				AOs.Save(command->second, false, std::stoi(parsedCommand[2]), std::stoi(parsedCommand[3]));
+				AOs.Save(command->second, false, std::stoi(parsedCommand[2]), std::stoi(parsedCommand[3]), rollType);
 			} else {
 				std::cout<<"Invalid syntax"<<std::endl;
 			}
 		} else if (parsedCommand[0] == "attack") {
-			AOs.Attack();
+			RollType rollType;
+			if(parsedCommand.size() >= 2) {
+				if(parsedCommand[1] == "adv") {
+					rollType = RollType::Advantage;
+				} else if (parsedCommand[1] == "disadv") {
+					rollType = RollType::Disadvantage;
+				} else {
+					std::cout<<parsedCommand[1]<<" not recognised"<<std::endl;
+					break;
+				}
+			} else {
+				rollType = RollType::Standard;
+			}
+			AOs.Attack(rollType);
 		} else if (parsedCommand[0] == "take") {
 			AOs.ApplyAttack(std::stoi(parsedCommand[1]), std::stoi(parsedCommand[2]));
 		} else if (parsedCommand[0] == "stop") {
@@ -277,8 +321,8 @@ int main() {
 			AOs.PrintStatus();
 		} else if (parsedCommand[0] == "help") {
 			std::cout<<"Commands:\n";
-			std::cout<<"[stat] [half/none] [dc] [damage]\n";
-			std::cout<<"attack\n";
+			std::cout<<"[stat] [half/none] [dc] [damage] [adv/disadv?]\n";
+			std::cout<<"attack [adv/disadv?]\n";
 			std::cout<<"take [damage]\n";
 			std::cout<<"status\n";
 			std::cout<<"help\n";
